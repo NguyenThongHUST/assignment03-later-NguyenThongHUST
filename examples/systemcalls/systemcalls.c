@@ -1,5 +1,8 @@
 #include "systemcalls.h"
-
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -17,7 +20,7 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
-    return true;
+    return system(cmd) != -1;
 }
 
 /**
@@ -58,10 +61,47 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    int pid = fork();     // fork process to child
+    bool res = false;
 
+    if (pid > 0)
+    {
+        // parent
+        int status;
+        if (wait(&status) == -1)
+        {
+            res = false;
+        }
+        else
+        {
+            // Check if the child terminated normally AND its exit code was 0 (success)
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+            {
+                res = true;
+            }
+            else
+            {
+                res = false;
+            }
+        }
+    }
+    else if (pid == 0)
+    {
+        //child
+        if (execv(command[0], command) < 0)
+        {
+            res = false;
+            _exit(1);
+        }
+    }
+    else
+    {
+        // error
+        res = false;
+    }
     va_end(args);
 
-    return true;
+    return res;
 }
 
 /**
@@ -92,8 +132,67 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
-
+bool ret = false;
+    int kidpid;
+    // printf(">>>> %s\n", outputfile);
+    int fd = open(outputfile, O_WRONLY | O_TRUNC | O_CREAT, 0644);
+    if (fd < 0)
+    {
+        perror("open");
+        ret = false;
+    }
+    switch (kidpid = fork())
+    {
+    case -1:
+        perror("fork");
+        ret = false;
+    case 0:
+        bool child_ret = true;
+        if (dup2(fd, 1) < 0)
+        {
+            perror("dup2");
+            child_ret = false;
+        }
+        close(fd);
+        //child
+        child_ret = execv(command[0], command) != -1;
+        perror("execv");
+        _exit(child_ret ? 0 : 1);
+    default:
+        close(fd);
+        int status;
+        if (wait(&status) == -1)
+        {
+            printf("DEBUG: Wait Error");
+            ret = false;
+        }
+        else
+        {
+            if (WIFEXITED(status))
+            {
+                // child finished with _exit or main
+                if(!WEXITSTATUS(status))
+                {
+                    // Status 0 mean success
+                    ret = true;
+                    printf("DEBUG: Child run successful ");
+                }
+                else
+                {
+                    ret = false;
+                    printf("DEBUG: Child run unsuccessful");
+                }
+            }
+            else
+            {
+                // todo: Use WIFSIGNALED
+                printf("DEBUG: WIFEXITED return false");
+                ret = false;
+            }
+        }
+        /* do whatever the parent wants to do. */
+    }
     va_end(args);
 
-    return true;
+    return ret;
 }
